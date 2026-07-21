@@ -304,23 +304,23 @@ def main():
     print(f"👥 Allowed usernames: {', '.join(['@' + u for u in ALLOWED_USERNAMES])}")
 
     # Use webhook if RENDER_EXTERNAL_URL is provided (Render sets this automatically)
+   def main():
+    # ... (application build code stays the same) ...
+
     external_url = os.getenv("RENDER_EXTERNAL_URL")
     if external_url:
         webhook_url = f"{external_url}/{TOKEN}"
         print(f"🔗 Setting webhook to: {webhook_url}")
-        # Run webhook with the Flask app (includes health routes)
         application.run_webhook(
             listen="0.0.0.0",
             port=int(os.environ.get("PORT", 10000)),
             url_path=TOKEN,
             webhook_url=webhook_url,
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-            webhook_app=web  # Pass the Flask app to serve health endpoints
+            drop_pending_updates=True
         )
     else:
-        # Fallback to polling with retry (if running locally)
-        print("⚠️ RENDER_EXTERNAL_URL not set. Using polling.")
+        # fallback for local testing
         application.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True
