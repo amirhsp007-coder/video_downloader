@@ -43,7 +43,7 @@ def is_user_allowed(username: str) -> bool:
 # YT-DLP HELPERS (unchanged)
 # -------------------
 def get_video_info(url):
-    def get_video_info(url):
+   
     try:
         cmd = [
             "yt-dlp",
