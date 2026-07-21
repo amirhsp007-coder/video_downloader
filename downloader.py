@@ -43,6 +43,7 @@ def is_user_allowed(username: str) -> bool:
 # YT-DLP HELPERS (unchanged)
 # -------------------
 def get_video_info(url):
+    def get_video_info(url):
     try:
         cmd = [
             "yt-dlp",
@@ -54,40 +55,20 @@ def get_video_info(url):
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
-
-        info = {
-            'title': data.get('title', 'Unknown Title'),
-            'duration': data.get('duration', 0),
-            'thumbnail': data.get('thumbnail', ''),
-            'formats': [],
-            'url': url
-        }
-
-        for fmt in data.get('formats', []):
-            height = fmt.get('height')
-            if height and height > 0:
-                info['formats'].append({
-                    'height': height,
-                    'format_id': fmt.get('format_id'),
-                    'ext': fmt.get('ext'),
-                    'filesize': fmt.get('filesize', 0),
-                    'acodec': fmt.get('acodec'),
-                    'vcodec': fmt.get('vcodec')
-                })
-
-        # Remove duplicate heights (keep best quality per height)
-        seen = set()
-        unique = []
-        for fmt in sorted(info['formats'], key=lambda x: x['height'], reverse=True):
-            if fmt['height'] not in seen:
-                seen.add(fmt['height'])
-                unique.append(fmt)
-        info['formats'] = unique
+        # ... rest of the processing ...
         return info
-    except Exception as e:
-        print(f"Error getting video info: {e}")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ yt-dlp failed with exit code {e.returncode}")
+        print(f"STDERR: {e.stderr}")
+        print(f"STDOUT: {e.stdout}")
         return None
-
+    except json.JSONDecodeError as e:
+        print(f"❌ Failed to parse JSON: {e}")
+        print(f"Raw output: {result.stdout if 'result' in locals() else 'No output'}")
+        return None
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        return None
 def download_video(url, format_string, quality_label):
     try:
         output_template = os.path.join(DOWNLOAD_DIR, f"%(title)s.%(ext)s")
