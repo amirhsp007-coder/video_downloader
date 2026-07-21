@@ -17,6 +17,7 @@ from telegram.ext import (
     ContextTypes, 
     filters
 )
+from telegram.request import HTTPXRequest
 
 # -------------------
 # ENV & CONFIG
@@ -363,7 +364,22 @@ def main():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    application = Application.builder().token(TOKEN).build()
+    # Create a custom request with increased timeouts
+    request = HTTPXRequest(
+        connection_pool_size=8,
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0,
+    )
+    
+    # Build application with custom request
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .request(request)
+        .build()
+    )
     
     # Add handlers
     application.add_handler(CommandHandler("start", start_command))
@@ -374,7 +390,16 @@ def main():
     
     print("🤖 Bot is starting...")
     print(f"👥 Allowed usernames: {', '.join(['@' + u for u in ALLOWED_USERNAMES])}")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Run with error handling for connection issues
+    try:
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True
+        )
+    except Exception as e:
+        print(f"Bot stopped with error: {e}")
+        # Retry logic could be added here
 
 if __name__ == "__main__":
     main()
