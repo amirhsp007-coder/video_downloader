@@ -4,6 +4,7 @@ import threading
 import re
 import json
 import tempfile
+import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask
@@ -32,7 +33,6 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 ALLOWED_USERNAMES = [
     "QuestionableCat",  
     "someonesnosy",  
-
 ]
 
 def is_user_allowed(username: str) -> bool:
@@ -359,6 +359,10 @@ def run_web():
 # MAIN
 # -------------------
 def main():
+    # Create a new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     application = Application.builder().token(TOKEN).build()
     
     # Add handlers
