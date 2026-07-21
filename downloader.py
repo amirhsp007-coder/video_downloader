@@ -1,22 +1,18 @@
 import os
 import subprocess
-import threading
-import re
 import json
-import tempfile
-import asyncio
 import signal
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    MessageHandler, 
+    Application,
+    CommandHandler,
+    MessageHandler,
     CallbackQueryHandler,
-    ContextTypes, 
+    ContextTypes,
     filters
 )
 from telegram.request import HTTPXRequest
@@ -30,35 +26,23 @@ DOWNLOAD_DIR = os.getenv("DOWNLOAD_DIR", "/tmp/downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # -------------------
-# USER AUTHENTICATION (Username-based)
+# USER AUTHENTICATION
 # -------------------
 ALLOWED_USERNAMES = [
-    "QuestionableCat",  
-    "someonesnosy",  
+    "QuestionableCat",
+    "someonesnosy",
 ]
 
 def is_user_allowed(username: str) -> bool:
-    """Check if user is allowed to use the bot"""
     if not username:
         return False
     username = username.lstrip('@')
     return username in ALLOWED_USERNAMES
 
-def get_user_info(user):
-    """Get user information"""
-    return {
-        'id': user.id,
-        'username': user.username or "No username",
-        'first_name': user.first_name or "",
-        'last_name': user.last_name or "",
-        'mention': user.mention_html()
-    }
-
 # -------------------
-# YT-DLP FUNCTIONS
+# YT-DLP HELPERS (unchanged)
 # -------------------
 def get_video_info(url):
-    """Get video metadata without downloading"""
     try:
         cmd = [
             "yt-dlp",
@@ -69,9 +53,8 @@ def get_video_info(url):
             url
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
         data = json.loads(result.stdout)
-        
+
         info = {
             'title': data.get('title', 'Unknown Title'),
             'duration': data.get('duration', 0),
@@ -79,7 +62,7 @@ def get_video_info(url):
             'formats': [],
             'url': url
         }
-        
+
         for fmt in data.get('formats', []):
             height = fmt.get('height')
             if height and height > 0:
@@ -91,25 +74,23 @@ def get_video_info(url):
                     'acodec': fmt.get('acodec'),
                     'vcodec': fmt.get('vcodec')
                 })
-        
+
+        # Remove duplicate heights (keep best quality per height)
         seen = set()
-        unique_formats = []
+        unique = []
         for fmt in sorted(info['formats'], key=lambda x: x['height'], reverse=True):
             if fmt['height'] not in seen:
                 seen.add(fmt['height'])
-                unique_formats.append(fmt)
-        info['formats'] = unique_formats
-        
+                unique.append(fmt)
+        info['formats'] = unique
         return info
     except Exception as e:
         print(f"Error getting video info: {e}")
         return None
 
 def download_video(url, format_string, quality_label):
-    """Download video with specified format"""
     try:
         output_template = os.path.join(DOWNLOAD_DIR, f"%(title)s.%(ext)s")
-        
         cmd = [
             "yt-dlp",
             "--no-playlist",
@@ -119,51 +100,37 @@ def download_video(url, format_string, quality_label):
             "--newline",
             url
         ]
-        
         if "+" in format_string:
             cmd.extend(["--merge-output-format", "mp4"])
-        
         if "bestaudio" in format_string:
             cmd.extend(["--extract-audio", "--audio-format", "mp3"])
-        
+
         print(f"Executing: {' '.join(cmd)}")
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
-        downloaded_files = list(Path(DOWNLOAD_DIR).glob("*"))
-        
-        if downloaded_files:
-            latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
-            return str(latest_file)
-        
-        return None
-        
-    except subprocess.CalledProcessError as e:
-        print(f"Download error: {e.stderr}")
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        downloaded = list(Path(DOWNLOAD_DIR).glob("*"))
+        if downloaded:
+            latest = max(downloaded, key=lambda f: f.stat().st_mtime)
+            return str(latest)
         return None
     except Exception as e:
-        print(f"Unexpected error: {e}")
+        print(f"Download error: {e}")
         return None
 
 # -------------------
-# BOT HANDLERS
+# BOT HANDLERS (unchanged)
 # -------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
     user = update.effective_user
     username = user.username or ""
-    
     if not is_user_allowed(username):
         await update.message.reply_text(
             f"🚫 **Access Denied**\n\n"
-            f"You are not authorized to use this bot.\n"
-            f"Your username: @{username if username else 'No username set'}\n\n"
-            f"Contact the bot owner to request access.\n"
+            f"Your username: @{username if username else 'No username set'}\n"
             f"Allowed users: {', '.join(['@' + u for u in ALLOWED_USERNAMES])}",
             parse_mode='Markdown'
         )
         return
-    
     await update.message.reply_text(
         "🎬 Welcome to the YouTube Downloader Bot!\n\n"
         "Send me a YouTube, Instagram, TikTok, or other supported video URL.\n"
@@ -171,48 +138,31 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process video URL from user"""
     user = update.effective_user
     username = user.username or ""
-    
-    # Check authorization
     if not is_user_allowed(username):
-        print(f"🚫 Unauthorized access attempt from @{username if username else 'No username'} (ID: {user.id})")
-        await update.message.reply_text(
-            f"🚫 You are not authorized to use this bot.\n"
-            f"Your username: @{username if username else 'No username set'}\n\n"
-            f"💡 Tip: Set a username in Telegram settings to be identified.",
-            parse_mode='Markdown'
-        )
+        print(f"🚫 Unauthorized access from @{username}")
+        await update.message.reply_text("🚫 You are not authorized.")
         return
-    
+
     url = update.message.text.strip()
-    
     if not (url.startswith('http://') or url.startswith('https://')):
-        await update.message.reply_text("Please send a valid URL starting with http:// or https://")
+        await update.message.reply_text("Please send a valid URL.")
         return
-    
-    # Log the request
+
     print(f"📥 User @{username} requested: {url}")
-    
     status_msg = await update.message.reply_text("🔄 Fetching video information...")
-    
+
     video_info = get_video_info(url)
-    
     if not video_info or not video_info.get('formats'):
-        await status_msg.edit_text(
-            "❌ Could not fetch video information.\n"
-            "Make sure the URL is valid and accessible."
-        )
+        await status_msg.edit_text("❌ Could not fetch video information.")
         return
-    
+
     context.user_data['video_info'] = video_info
     context.user_data['url'] = url
-    
+
     keyboard = []
-    
     keyboard.append([InlineKeyboardButton("🎵 Audio only (MP3)", callback_data="quality_audio")])
-    
     for fmt in video_info['formats'][:6]:
         height = fmt['height']
         if height:
@@ -220,50 +170,37 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
             label = f"📹 {height}p"
             if not has_audio:
                 label += " (video only)"
-            callback = f"quality_{fmt['format_id']}"
-            keyboard.append([InlineKeyboardButton(label, callback_data=callback)])
-    
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"quality_{fmt['format_id']}")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     title = video_info.get('title', 'Unknown Title')
     duration = video_info.get('duration', 0)
     minutes = int(duration // 60)
     seconds = int(duration % 60)
-    
-    info_text = f"📹 **{title}**\n"
-    info_text += f"⏱ Duration: {minutes}:{seconds:02d}\n\n"
-    info_text += "Select the quality you want:"
-    
-    await status_msg.edit_text(
-        info_text,
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+
+    info_text = f"📹 **{title}**\n⏱ {minutes}:{seconds:02d}\n\nSelect quality:"
+    await status_msg.edit_text(info_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def quality_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle quality selection callback"""
     query = update.callback_query
     await query.answer()
-    
+
     user = update.effective_user
     username = user.username or ""
-    
-    # Check authorization again
     if not is_user_allowed(username):
-        await query.edit_message_text("🚫 You are not authorized to use this bot.")
+        await query.edit_message_text("🚫 You are not authorized.")
         return
-    
-    callback_data = query.data
+
     video_info = context.user_data.get('video_info')
     url = context.user_data.get('url')
-    
     if not video_info or not url:
         await query.edit_message_text("❌ Session expired. Please send the URL again.")
         return
-    
+
+    callback_data = query.data
     format_string = None
     quality_label = ""
-    
+
     if callback_data == "quality_audio":
         format_string = "bestaudio/best"
         quality_label = "Audio (MP3)"
@@ -280,36 +217,28 @@ async def quality_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     format_string = format_id
                 break
-    
+
     if not format_string:
         await query.edit_message_text("❌ Invalid quality selection.")
         return
-    
+
     await query.edit_message_text(f"📥 Downloading {quality_label}... Please wait.")
-    
     downloaded_file = download_video(url, format_string, quality_label)
-    
+
     if not downloaded_file or not os.path.exists(downloaded_file):
-        await query.edit_message_text(
-            "❌ Download failed. The video might be unavailable or too large."
-        )
+        await query.edit_message_text("❌ Download failed.")
         return
-    
+
     file_size = os.path.getsize(downloaded_file) / (1024 * 1024)
-    
     try:
         if file_size > 50:
-            await query.edit_message_text(
-                f"⚠️ File is {file_size:.1f}MB. Telegram limit is 50MB.\n"
-                f"Try selecting a lower quality or audio-only."
-            )
+            await query.edit_message_text(f"⚠️ File is {file_size:.1f}MB. Telegram limit is 50MB.")
             os.remove(downloaded_file)
             return
-        
+
         ext = Path(downloaded_file).suffix.lower()
-        
         await query.edit_message_text(f"📤 Uploading {quality_label}...")
-        
+
         with open(downloaded_file, 'rb') as f:
             if ext in ['.mp3', '.m4a', '.aac', '.flac']:
                 await context.bot.send_audio(
@@ -325,22 +254,16 @@ async def quality_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption=f"✅ {quality_label} - {video_info.get('title', 'Video')}",
                     supports_streaming=True
                 )
-        
+
         os.remove(downloaded_file)
-        
-        await query.edit_message_text(
-            f"✅ Download complete!\n"
-            f"Quality: {quality_label}\n"
-            f"File size: {file_size:.1f}MB"
-        )
-        
+        await query.edit_message_text(f"✅ Download complete!\nQuality: {quality_label}\nSize: {file_size:.1f}MB")
     except Exception as e:
         await query.edit_message_text(f"❌ Error sending file: {str(e)}")
         if os.path.exists(downloaded_file):
             os.remove(downloaded_file)
 
 # -------------------
-# FLASK KEEP-ALIVE SERVER
+# FLASK APP WITH HEALTH CHECK
 # -------------------
 web = Flask(__name__)
 
@@ -352,20 +275,11 @@ def home():
 def health():
     return "OK"
 
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    # Only bind to localhost to avoid external access
-    web.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
-
 # -------------------
 # MAIN
 # -------------------
 def main():
-    # Create a new event loop for this thread
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Create a custom request with increased timeouts
+    # Use a custom request with longer timeouts
     request = HTTPXRequest(
         connection_pool_size=8,
         connect_timeout=30.0,
@@ -373,61 +287,51 @@ def main():
         write_timeout=30.0,
         pool_timeout=30.0,
     )
-    
-    # Build application with custom request
+
     application = (
         Application.builder()
         .token(TOKEN)
         .request(request)
         .build()
     )
-    
-    # Add handlers
+
+    # Register handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     application.add_handler(CallbackQueryHandler(quality_callback, pattern="^quality_"))
-    
-    # Start Flask server in a separate thread
-    # Use daemon=False to ensure it doesn't get killed prematurely
-    web_thread = threading.Thread(target=run_web, daemon=False)
-    web_thread.start()
-    
+
     print("🤖 Bot is starting...")
     print(f"👥 Allowed usernames: {', '.join(['@' + u for u in ALLOWED_USERNAMES])}")
-    
-    # Add signal handlers for graceful shutdown
-    def signal_handler(sig, frame):
-        print("\n🛑 Shutting down gracefully...")
-        application.stop()
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Run polling with error handling and retry
-    retry_count = 0
-    max_retries = 3
-    
-    while retry_count < max_retries:
-        try:
-            print(f"🔄 Attempt {retry_count + 1}/{max_retries}")
-            application.run_polling(
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
-                # Clean up any existing webhook
-                webhook_url=""
-            )
-            break
-        except Exception as e:
-            retry_count += 1
-            print(f"❌ Error: {e}")
-            if retry_count < max_retries:
-                print(f"⏳ Retrying in 5 seconds...")
-                import time
-                time.sleep(5)
-            else:
-                print("❌ Max retries reached. Exiting.")
-                raise
+
+    # Use webhook if RENDER_EXTERNAL_URL is provided (Render sets this automatically)
+    external_url = os.getenv("RENDER_EXTERNAL_URL")
+    if external_url:
+        webhook_url = f"{external_url}/{TOKEN}"
+        print(f"🔗 Setting webhook to: {webhook_url}")
+        # Run webhook with the Flask app (includes health routes)
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 10000)),
+            url_path=TOKEN,
+            webhook_url=webhook_url,
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+            webhook_app=web  # Pass the Flask app to serve health endpoints
+        )
+    else:
+        # Fallback to polling with retry (if running locally)
+        print("⚠️ RENDER_EXTERNAL_URL not set. Using polling.")
+        application.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True
+        )
 
 if __name__ == "__main__":
+    # Graceful shutdown on SIGTERM (Render sends this)
+    def signal_handler(sig, frame):
+        print("\n🛑 Shutting down gracefully...")
+        sys.exit(0)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     main()

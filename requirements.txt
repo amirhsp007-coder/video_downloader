@@ -1,5 +1,5 @@
-python-telegram-bot>=20.0,<21.0
-flask>=2.0
-python-dotenv>=1.0
-yt-dlp>=2023.0
-httpx>=0.24.0
+python-telegram-bot==20.7
+Flask==3.0.0
+python-dotenv==1.0.0
+yt-dlp==2023.10.13
+httpx==0.25.1
