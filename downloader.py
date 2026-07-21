@@ -303,9 +303,6 @@ def main():
     print("🤖 Bot is starting...")
     print(f"👥 Allowed usernames: {', '.join(['@' + u for u in ALLOWED_USERNAMES])}")
 
-    # Use webhook if RENDER_EXTERNAL_URL is provided (Render sets this automatically)
-   def main():
-    # ... (application build code stays the same) ...
 
     external_url = os.getenv("RENDER_EXTERNAL_URL")
     if external_url:
