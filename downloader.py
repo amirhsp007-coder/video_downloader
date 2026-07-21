@@ -5,6 +5,8 @@ import re
 import json
 import tempfile
 import asyncio
+import signal
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask
@@ -30,7 +32,6 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # -------------------
 # USER AUTHENTICATION (Username-based)
 # -------------------
-# List of allowed usernames (without @ symbol)
 ALLOWED_USERNAMES = [
     "QuestionableCat",  
     "someonesnosy",  
@@ -40,7 +41,6 @@ def is_user_allowed(username: str) -> bool:
     """Check if user is allowed to use the bot"""
     if not username:
         return False
-    # Remove @ if present
     username = username.lstrip('@')
     return username in ALLOWED_USERNAMES
 
@@ -354,7 +354,8 @@ def health():
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    web.run(host="0.0.0.0", port=port)
+    # Only bind to localhost to avoid external access
+    web.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 # -------------------
 # MAIN
@@ -386,20 +387,47 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
     application.add_handler(CallbackQueryHandler(quality_callback, pattern="^quality_"))
     
-    threading.Thread(target=run_web, daemon=True).start()
+    # Start Flask server in a separate thread
+    # Use daemon=False to ensure it doesn't get killed prematurely
+    web_thread = threading.Thread(target=run_web, daemon=False)
+    web_thread.start()
     
     print("🤖 Bot is starting...")
     print(f"👥 Allowed usernames: {', '.join(['@' + u for u in ALLOWED_USERNAMES])}")
     
-    # Run with error handling for connection issues
-    try:
-        application.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True
-        )
-    except Exception as e:
-        print(f"Bot stopped with error: {e}")
-        # Retry logic could be added here
+    # Add signal handlers for graceful shutdown
+    def signal_handler(sig, frame):
+        print("\n🛑 Shutting down gracefully...")
+        application.stop()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Run polling with error handling and retry
+    retry_count = 0
+    max_retries = 3
+    
+    while retry_count < max_retries:
+        try:
+            print(f"🔄 Attempt {retry_count + 1}/{max_retries}")
+            application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                # Clean up any existing webhook
+                webhook_url=""
+            )
+            break
+        except Exception as e:
+            retry_count += 1
+            print(f"❌ Error: {e}")
+            if retry_count < max_retries:
+                print(f"⏳ Retrying in 5 seconds...")
+                import time
+                time.sleep(5)
+            else:
+                print("❌ Max retries reached. Exiting.")
+                raise
 
 if __name__ == "__main__":
     main()

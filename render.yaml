@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: video-downloader
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 downloader.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEB_CONCURRENCY
+        value: 1
+    healthCheckPath: /health
+    scaling:
+      minInstances: 1
+      maxInstances: 1
